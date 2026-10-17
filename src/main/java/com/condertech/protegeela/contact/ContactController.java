@@ -21,7 +21,8 @@ public class ContactController {
 
     public record ContactInput(@NotBlank @Size(max=150) String name,
             @NotBlank @Size(max=30) String phone, @Email @Size(max=254) String email,
-            @NotBlank @Size(max=40) String relationship, Boolean can_view_exact_location) {}
+            @NotBlank @Size(max=40) String relationship, Boolean can_view_exact_location,
+            @Pattern(regexp="whatsapp|sms|email|call") String preferred_channel) {}
     public record Permission(@NotNull Boolean can_view_exact_location) {}
 
     @GetMapping
@@ -37,9 +38,9 @@ public class ContactController {
         int count = jdbc.queryForObject("SELECT count(*) FROM app_contacts WHERE owner_user_id=?", Integer.class, user);
         if (count >= 20) throw new BusinessException("Limite de 20 contatos atingido.");
         UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO app_contacts(id,owner_user_id,name,phone,email,relationship,can_view_exact_location,is_primary) VALUES (?,?,?,?,?,?,?,?)",
+        jdbc.update("INSERT INTO app_contacts(id,owner_user_id,name,phone,email,relationship,can_view_exact_location,is_primary,preferred_channel) VALUES (?,?,?,?,?,?,?,?,?)",
                 id, user, input.name().strip(), input.phone().strip(), email(input.email()), input.relationship().strip(),
-                Boolean.TRUE.equals(input.can_view_exact_location()), count == 0);
+                Boolean.TRUE.equals(input.can_view_exact_location()), count == 0, channel(input.preferred_channel()));
         return owned(user, id);
     }
 
@@ -48,8 +49,9 @@ public class ContactController {
     public Map<String, Object> update(@AuthenticationPrincipal UUID user, @PathVariable UUID id, @Valid @RequestBody ContactInput input) {
         lock(user);
         owned(user, id);
-        jdbc.update("UPDATE app_contacts SET name=?,phone=?,email=?,relationship=? WHERE id=? AND owner_user_id=?",
-                input.name().strip(), input.phone().strip(), email(input.email()), input.relationship().strip(), id, user);
+        jdbc.update("UPDATE app_contacts SET name=?,phone=?,email=?,relationship=?,preferred_channel=? WHERE id=? AND owner_user_id=?",
+                input.name().strip(), input.phone().strip(), email(input.email()), input.relationship().strip(),
+                channel(input.preferred_channel()), id, user);
         return owned(user, id);
     }
 
@@ -77,4 +79,5 @@ public class ContactController {
     }
     private void lock(UUID user) { jdbc.queryForObject("SELECT id FROM users WHERE id=? FOR UPDATE", UUID.class, user); }
     private String email(String value) { return value == null || value.isBlank() ? null : value.strip(); }
+    private String channel(String value) { return value == null || value.isBlank() ? "whatsapp" : value; }
 }

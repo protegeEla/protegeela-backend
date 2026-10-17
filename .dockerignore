@@ -1,0 +1,5 @@
+target/
+.git/
+.local/
+application-local.properties
+*.log

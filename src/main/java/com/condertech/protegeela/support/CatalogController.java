@@ -29,7 +29,9 @@ public class CatalogController {
             @Size(max=500) String accessibility_info, @NotNull Boolean is_verified) {}
     public record ContentInput(@NotBlank @Size(max=200) String title,
             @NotBlank @Size(max=1000) String summary, @NotBlank @Size(max=50000) String content,
-            @NotBlank @Size(max=40) String category, @NotNull Boolean is_published) {}
+            @NotBlank @Size(max=40) String category, @NotNull Boolean is_published,
+            @Size(max=200) String source_name,
+            @Size(max=500) @Pattern(regexp="https?://[^\\s]+") String source_url) {}
     public record ServiceInput(@NotBlank @Size(max=200) String name,
             @NotBlank @Size(max=30) String phone, @NotBlank @Size(max=1000) String description,
             @NotBlank @Size(max=100) String region, @NotNull Boolean is_active) {}
@@ -97,8 +99,9 @@ public class CatalogController {
     @Transactional
     public Map<String, Object> createContent(@Valid @RequestBody ContentInput input) {
         UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO app_safety_contents(id,title,summary,content,category,is_published) VALUES (?,?,?,?,?,?)",
-                id, input.title(), input.summary(), input.content(), input.category(), input.is_published());
+        jdbc.update("INSERT INTO app_safety_contents(id,title,summary,content,category,is_published,source_name,source_url) VALUES (?,?,?,?,?,?,?,?)",
+                id, input.title(), input.summary(), input.content(), input.category(), input.is_published(),
+                input.source_name(), input.source_url());
         return rows.one("SELECT * FROM app_safety_contents WHERE id=?", id);
     }
 
@@ -106,8 +109,9 @@ public class CatalogController {
     @Transactional
     public Map<String, Object> updateContent(@PathVariable UUID id, @Valid @RequestBody ContentInput input) {
         rows.one("SELECT id FROM app_safety_contents WHERE id=? FOR UPDATE", id);
-        jdbc.update("UPDATE app_safety_contents SET title=?,summary=?,content=?,category=?,is_published=? WHERE id=?",
-                input.title(), input.summary(), input.content(), input.category(), input.is_published(), id);
+        jdbc.update("UPDATE app_safety_contents SET title=?,summary=?,content=?,category=?,is_published=?,source_name=?,source_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                input.title(), input.summary(), input.content(), input.category(), input.is_published(),
+                input.source_name(), input.source_url(), id);
         return rows.one("SELECT * FROM app_safety_contents WHERE id=?", id);
     }
 

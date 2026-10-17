@@ -46,6 +46,17 @@ public class User {
     @Column(nullable = false)
     private boolean enabled;
 
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified;
+
+    @JsonIgnore
+    @Column(name = "email_verification_code_hash", length = 60)
+    private String emailVerificationCodeHash;
+
+    @JsonIgnore
+    @Column(name = "email_verification_expires_at")
+    private Instant emailVerificationExpiresAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -58,6 +69,18 @@ public class User {
         this.password = passwordHash;
         this.role = UserRole.USER;
         this.enabled = true;
+        this.emailVerified = false;
+    }
+
+    public void startEmailVerification(String codeHash, Instant expiresAt) {
+        this.emailVerificationCodeHash = codeHash;
+        this.emailVerificationExpiresAt = expiresAt;
+    }
+
+    public void verifyEmail() {
+        this.emailVerified = true;
+        this.emailVerificationCodeHash = null;
+        this.emailVerificationExpiresAt = null;
     }
 
     @PrePersist

@@ -27,6 +27,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header("Retry-After", "900")
                 .body(new ApiError(Instant.now(), 429, "Too Many Requests", exception.getMessage(), request.getRequestURI()));
     }
+    @ExceptionHandler(com.condertech.protegeela.auth.EmailNotVerifiedException.class)
+    public ResponseEntity<ApiError> emailNotVerified(
+            com.condertech.protegeela.auth.EmailNotVerifiedException exception,
+            HttpServletRequest request) {
+        return error(HttpStatus.FORBIDDEN, exception.getMessage(), request);
+    }
     @ExceptionHandler(com.condertech.protegeela.support.PlacesException.class)
     public ResponseEntity<ApiError> places(com.condertech.protegeela.support.PlacesException exception,
                                           HttpServletRequest request) {
@@ -42,6 +48,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiError> business(BusinessException exception, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(EmailDeliveryException.class)
+    public ResponseEntity<ApiError> emailDelivery(EmailDeliveryException exception, HttpServletRequest request) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)

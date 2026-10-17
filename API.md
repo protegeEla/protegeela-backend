@@ -4,8 +4,8 @@ Atualizações ao vivo do mapa e cache: [Redis e WebSocket](REDIS_WEBSOCKET.md).
 Login/cadastro possuem limites de tentativas por 15 minutos e retornam 429 com `Retry-After`
 quando excedidos. Detalhes e pendências: [revisão de segurança](SECURITY_REVIEW.md).
 
-Base local: `http://localhost:8080/api`. Exceto saúde, cadastro e login, as rotas
-exigem `Authorization: Bearer <token>`.
+Base local: `http://localhost:8080/api`. Exceto saúde, cadastro, login e resposta
+a convite, as rotas exigem `Authorization: Bearer <token>`.
 IDs são UUIDs. Datas são ISO 8601 UTC. Listas retornam `{"items": [...]}`.
 Erros de validação retornam 400; autenticação 401; permissão administrativa 403;
 recurso ausente ou pertencente a outra conta 404; conflito de estado 409.
@@ -15,7 +15,9 @@ recurso ausente ou pertencente a outra conta 404; conflito de estado 409.
 | Método | Rota | Corpo JSON / comportamento |
 | --- | --- | --- |
 | GET | `/health` | Estado público da API: `{"status":"ok"}` |
-| POST | `/auth/register` | `name`, `email`, `phone`, `password`; retorna 201 com `token` e `profile` |
+| POST | `/auth/register` | `name`, `email`, `phone`, `password`; com a confirmação desativada, cria a conta e retorna `token` e `profile`; se ativada, envia código e retorna estado pendente |
+| POST | `/auth/verify-email` | Com a confirmação ativada: `email`, `code` (6 dígitos); confirma o e-mail e retorna `token` e `profile` |
+| POST | `/auth/resend-verification` | Com a confirmação ativada: `email`; solicita outro código sem revelar se a conta existe |
 | POST | `/auth/login` | `email`, `password`; retorna `token` e `profile` |
 | POST | `/auth/logout` | Revoga o token atual; retorna 204 |
 | GET | `/profile` | Perfil da pessoa autenticada |
@@ -27,10 +29,16 @@ Novas contas recebem `USER`; o cliente não escolhe ID nem role. E-mails são
 normalizados em minúsculas e únicos no banco. Senhas usam BCrypt, com mínimo
 de oito caracteres e máximo de 72 bytes UTF-8.
 
-O cadastro inicia a sessão. Tokens aleatórios expiram em 12 horas e somente seu
+Confirmação de e-mail está desativada por padrão (`EMAIL_VERIFICATION_ENABLED=false`),
+então o cadastro funciona sem SMTP. Para retomar esse recurso, ative a variável e
+configure `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` e `MAIL_FROM`.
+O código expira em 10 minutos. A migration aditiva `V6__email_verification.sql`
+preserva os campos necessários e mantém contas existentes confirmadas.
+
+Após confirmar o código, tokens aleatórios expiram em 12 horas e somente seu
 hash SHA-256 é persistido. Não há cookies de autenticação. O frontend mantém o
 token apenas em memória; recarregar a página exige novo login. Recuperação de
-senha e confirmação de e-mail ainda não estão disponíveis.
+senha ainda não está disponível.
 
 ## Contatos
 
@@ -40,6 +48,9 @@ senha e confirmação de e-mail ainda não estão disponíveis.
 | POST | `/contacts` | Cria contato (201) |
 | PUT | `/contacts/{id}` | Edita nome, telefone, e-mail e relação |
 | PATCH | `/contacts/{id}/location-permission` | Salva `can_view_exact_location` |
+| POST | `/contacts/{id}/invitation` | Gera link temporário de convite para compartilhamento manual |
+| GET | `/contact-invitations/{token}` | Consulta pública do convite |
+| POST | `/contact-invitations/{token}/respond` | Aceita ou recusa publicamente o convite |
 | DELETE | `/contacts/{id}` | Remove contato (204) |
 
 Corpo de criação/edição:
@@ -50,14 +61,40 @@ Corpo de criação/edição:
   "phone": "11999999999",
   "email": null,
   "relationship": "amiga",
-  "can_view_exact_location": false
+  "can_view_exact_location": false,
+  "preferred_channel": "whatsapp"
 }
 ```
 
 O primeiro contato é principal. Ao removê-lo, o mais antigo assume essa posição.
 Há limite de 20 contatos por conta. O proprietário vem da sessão, nunca do corpo.
-`invitation_status=not_sent`: nenhum convite é enviado. A permissão de localização
-fica armazenada para uma futura integração; não libera coordenadas para terceiros.
+O canal pode ser `whatsapp`, `sms`, `email` ou `call`. Criar o link muda o estado
+para `pending`; o contato muda para `accepted` ou `declined` ao responder. O link
+expira em sete dias e somente seu hash é armazenado. Sem provedor externo, o
+frontend abre o canal escolhido para compartilhamento manual. A permissão de
+localização não libera coordenadas automaticamente para terceiros.
+
+## Acompanhamento “Cheguei bem”
+
+| Método | Rota | Função |
+| --- | --- | --- |
+| POST | `/safety-checkins` | Inicia com prazo, compartilhamento opcional e primeira localização |
+| GET | `/safety-checkins/current` | Retorna o acompanhamento ativo ou `null` |
+| POST | `/safety-checkins/complete` | Confirma chegada segura |
+| POST | `/safety-checkins/cancel` | Cancela o acompanhamento |
+| POST | `/safety-checkins/current/share` | Ativa o compartilhamento e gera um novo link privado |
+| PUT | `/safety-checkins/current/location` | Registra uma posição do trajeto (204) |
+| GET | `/safety-checkins/shared/{token}` | Exibe estado e percurso pelo link, sem login |
+
+O tempo definitivo roda no backend. Após o horário previsto e a tolerância, uma
+tarefa cria um alerta privado `missed_check_in`, salvo se já houver alerta ativo.
+Quando `share_location=true`, a primeira posição pode ser enviada em `location`.
+As posições seguintes são autenticadas; o visualizador usa um token aleatório cujo
+hash é armazenado no banco. A resposta pública não pode ser armazenada em cache.
+Ao confirmar ou cancelar, o compartilhamento é encerrado e o percurso exato é
+removido. O link expira 24 horas depois do fim previsto.
+Enquanto WhatsApp/SMS/e-mail não estiverem configurados, esse alerta fica
+registrado, mas nenhuma mensagem externa é enviada.
 
 ## Alertas
 
@@ -137,7 +174,9 @@ Campos de ponto: `name`, `category`, `address`, `city`, `state` (UF), `latitude`
 `longitude`, `is_verified`; opcionais: `description`, `phone`, `opening_hours`,
 `website` (HTTP/HTTPS), `accessibility_info`.
 
-Campos de orientação: `title`, `summary`, `content`, `category`, `is_published`.
+Campos de orientação: `title`, `summary`, `content`, `category`, `is_published`;
+opcionais: `source_name` e `source_url` (HTTP/HTTPS). `updated_at` é mantido pelo
+servidor.
 Use `is_published=false` para retirar uma orientação da lista pública.
 
 Campos de serviço: `name`, `phone`, `description`, `region`, `is_active`.
@@ -145,12 +184,9 @@ Use `is_active=false` para desativar. O cadastro não inicia chamadas telefônic
 
 ## Banco e execução
 
-O Flyway acompanha `V1__application_schema.sql` em `protegeela_schema_history`,
-preservando o histórico legado `flyway_schema_history`. A migração cria `users`
-e `auth_sessions` apenas se não existirem e cria as tabelas com prefixo `app_`.
-O Hibernate valida a entidade de usuário.
+O Flyway executa a migration consolidada V5__complete_application_schema.sql em protegeela_schema_history e preserva os registros anteriores. O script cria tabelas ausentes e adiciona colunas necessarias sem apagar dados.
 
-Em banco novo, crie o database e configure `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`.
+Em banco novo, crie o database e configure `DB_HOST`, `DB_PORT` e `DB_PASSWORD`.
 Em banco existente, mantenha sua estrutura de contas compatível com `User`.
 Não apague o histórico de migrations para reaplicar uma migração já executada.
 

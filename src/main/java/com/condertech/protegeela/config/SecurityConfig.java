@@ -28,7 +28,7 @@ public class SecurityConfig {
     SecurityFilterChain apiSecurity(HttpSecurity http, AuthService auth,
             @Value("${app.cors.allowed-origins}") String origins) throws Exception {
         CorsConfiguration cors = new CorsConfiguration();
-        cors.setAllowedOrigins(Arrays.stream(origins.split(",")).map(String::strip).toList());
+        cors.setAllowedOriginPatterns(Arrays.stream(origins.split(",")).map(String::strip).toList());
         cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
@@ -41,7 +41,11 @@ public class SecurityConfig {
                 .formLogin(c -> c.disable()).httpBasic(c -> c.disable()).logout(c -> c.disable())
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(org.springframework.http.HttpMethod.POST,
-                                "/api/auth/register", "/api/auth/login").permitAll()
+                                "/api/auth/register", "/api/auth/login",
+                                "/api/auth/verify-email", "/api/auth/resend-verification").permitAll()
+                        .requestMatchers("/api/contact-invitations/**").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET,
+                                "/api/safety-checkins/shared/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/health").permitAll()
                         // Browser WebSocket authenticates in its first frame, before receiving events.
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/ws/alerts").permitAll()

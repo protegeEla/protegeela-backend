@@ -15,6 +15,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -22,16 +23,22 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AuthService {
+    private static final long STANDARD_SESSION_HOURS = 12;
+    private static final long REMEMBERED_SESSION_DAYS = 30;
+
     private final UserRepository users;
     private final PasswordEncoder encoder;
     private final JdbcTemplate jdbc;
     private final String dummyHash;
+    private final boolean emailVerificationEnabled;
     private final SecureRandom random = new SecureRandom();
 
-    public AuthService(UserRepository users, PasswordEncoder encoder, JdbcTemplate jdbc) {
+    public AuthService(UserRepository users, PasswordEncoder encoder, JdbcTemplate jdbc,
+            @Value("${app.email-verification.enabled:false}") boolean emailVerificationEnabled) {
         this.users = users;
         this.encoder = encoder;
         this.jdbc = jdbc;
+        this.emailVerificationEnabled = emailVerificationEnabled;
         this.dummyHash = encoder.encode(UUID.randomUUID().toString());
     }
 
@@ -41,17 +48,29 @@ public class AuthService {
         if (!matches || user == null || !user.isEnabled()) {
             throw new BadCredentialsException("E-mail ou senha incorretos.");
         }
+        if (emailVerificationEnabled && !user.isEmailVerified()) {
+            throw new EmailNotVerifiedException();
+        }
         return user;
     }
 
     @Transactional
     public String issueToken(User user) {
+        return issueToken(user, false);
+    }
+
+    @Transactional
+    public String issueToken(User user, boolean rememberMe) {
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        jdbc.update("DELETE FROM auth_sessions WHERE expires_at <= ?", Timestamp.from(Instant.now()));
+        Instant now = Instant.now();
+        Instant expiresAt = rememberMe
+                ? now.plus(REMEMBERED_SESSION_DAYS, ChronoUnit.DAYS)
+                : now.plus(STANDARD_SESSION_HOURS, ChronoUnit.HOURS);
+        jdbc.update("DELETE FROM auth_sessions WHERE expires_at <= ?", Timestamp.from(now));
         jdbc.update("INSERT INTO auth_sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-                hash(token), user.getId(), Timestamp.from(Instant.now().plus(12, ChronoUnit.HOURS)));
+                hash(token), user.getId(), Timestamp.from(expiresAt));
         return token;
     }
 

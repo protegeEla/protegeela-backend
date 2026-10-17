@@ -19,11 +19,14 @@ public class AccountController {
     private final UserService users;
     private final AuthService auth;
     private final AuthRateLimiter limits;
+    private final EmailVerificationService emailVerification;
 
-    public AccountController(UserService users, AuthService auth, AuthRateLimiter limits) {
+    public AccountController(UserService users, AuthService auth, AuthRateLimiter limits,
+            EmailVerificationService emailVerification) {
         this.users = users;
         this.auth = auth;
         this.limits = limits;
+        this.emailVerification = emailVerification;
     }
 
     public record Register(@NotBlank @Size(max = 150) String name,
@@ -32,9 +35,18 @@ public class AccountController {
             @NotBlank @Size(min = 8, max = 72) String password) {
         @Override public String toString() { return "Register[redacted]"; }
     }
-    public record Login(@NotBlank @Email @Size(max = 254) String email, @NotBlank @Size(max = 72) String password) {
+    public record Login(@NotBlank @Email @Size(max = 254) String email,
+            @NotBlank @Size(max = 72) String password, boolean remember_me) {
         @Override public String toString() { return "Login[redacted]"; }
     }
+    public record VerifyEmail(@NotBlank @Email @Size(max = 254) String email,
+            @NotBlank @Pattern(regexp = "\\d{6}") String code) {
+        @Override public String toString() { return "VerifyEmail[redacted]"; }
+    }
+    public record ResendEmailCode(@NotBlank @Email @Size(max = 254) String email) {
+        @Override public String toString() { return "ResendEmailCode[redacted]"; }
+    }
+    public record Registration(String email, String status) {}
     public record ProfileInput(@NotBlank @Size(max = 150) String full_name,
             @NotBlank @Size(max = 30) String phone,
             @NotNull @Pattern(regexp = "standard|discreet") String privacy_mode) {}
@@ -55,18 +67,39 @@ public class AccountController {
     @PostMapping("/auth/register")
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
-    public Session register(@Valid @RequestBody Register input, HttpServletRequest request) {
+    public Object register(@Valid @RequestBody Register input, HttpServletRequest request) {
         limits.register(request.getRemoteAddr());
         User user = users.create(input.name(), input.email(), input.password());
         user.updateProfile(input.name(), input.phone(), "standard");
+        if (emailVerification.isEnabled()) {
+            emailVerification.sendForNewAccount(user);
+            return new Registration(user.getEmail(), "verification_required");
+        }
+        user.verifyEmail();
         return new Session(auth.issueToken(user), Profile.from(user));
+    }
+
+    @PostMapping("/auth/verify-email")
+    public Session verifyEmail(@Valid @RequestBody VerifyEmail input, HttpServletRequest request) {
+        limits.verifyEmail(request.getRemoteAddr(), input.email());
+        User user = emailVerification.verify(input.email(), input.code());
+        return new Session(auth.issueToken(user), Profile.from(user));
+    }
+
+    @PostMapping("/auth/resend-verification")
+    public Map<String, String> resendVerification(@Valid @RequestBody ResendEmailCode input,
+            HttpServletRequest request) {
+        limits.resendVerification(request.getRemoteAddr(), input.email());
+        emailVerification.resend(input.email());
+        return Map.of("status", "accepted",
+                "message", "Se a conta estiver aguardando confirmação, um novo código será enviado.");
     }
 
     @PostMapping("/auth/login")
     public Session login(@Valid @RequestBody Login input, HttpServletRequest request) {
         limits.login(request.getRemoteAddr(), input.email());
         User user = auth.authenticate(input.email(), input.password());
-        return new Session(auth.issueToken(user), Profile.from(user));
+        return new Session(auth.issueToken(user, input.remember_me()), Profile.from(user));
     }
 
     @PostMapping("/auth/logout")

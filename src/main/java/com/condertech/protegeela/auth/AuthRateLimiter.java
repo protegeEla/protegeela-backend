@@ -33,6 +33,16 @@ public class AuthRateLimiter {
 
     public void register(String remoteAddress) { take("register-ip:" + remoteAddress, 10); }
 
+    public void verifyEmail(String remoteAddress, String email) {
+        take("verify-email-ip:" + remoteAddress, 20);
+        take("verify-email-account:" + email.strip().toLowerCase(Locale.ROOT), 10);
+    }
+
+    public void resendVerification(String remoteAddress, String email) {
+        take("resend-email-ip:" + remoteAddress, 10);
+        take("resend-email-account:" + email.strip().toLowerCase(Locale.ROOT), 3);
+    }
+
     private synchronized void take(String identity, int max) {
         String key = "protegeela:auth:limit:" + hash(identity);
         long now = System.currentTimeMillis();
